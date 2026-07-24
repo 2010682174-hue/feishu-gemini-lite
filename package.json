@@ -1,7 +1,7 @@
 {
   "name": "feishu-gemini-lite",
   "version": "1.0.0",
-  "description": "A lightweight Feishu bot for Google Gemini with custom system prompt support.",
+  "description": "A lightweight Feishu bot for Google Gemini with text and image support.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
