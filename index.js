@@ -91,7 +91,7 @@ app.post('/', async (req, res) => {
         params: { type: 'image' }
       });
 
-      // 使用绝对兼容的 Promise 转换流
+      // 使用终极兼容的转换函数
       const imageBuffer = await streamToBuffer(imageResponse);
       const imageBase64 = imageBuffer.toString('base64');
 
@@ -115,14 +115,25 @@ app.post('/', async (req, res) => {
   }
 });
 
-// 绝对兼容的流转 Buffer 函数
-function streamToBuffer(stream) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    stream.on('data', (chunk) => chunks.push(chunk));
-    stream.on('end', () => resolve(Buffer.concat(chunks)));
-    stream.on('error', (err) => reject(err));
-  });
+// 终极兼容的转 Buffer 函数
+async function streamToBuffer(input) {
+  if (Buffer.isBuffer(input)) return input;
+  if (input && typeof input.on === 'function') {
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      input.on('data', (chunk) => chunks.push(chunk));
+      input.on('end', () => resolve(Buffer.concat(chunks)));
+      input.on('error', (err) => reject(err));
+    });
+  }
+  if (input && typeof input.arrayBuffer === 'function') {
+    const ab = await input.arrayBuffer();
+    return Buffer.from(ab);
+  }
+  if (input && input.fileBuffer) return Buffer.from(input.fileBuffer);
+  if (input && input.data) return Buffer.from(input.data);
+  if (input instanceof ArrayBuffer) return Buffer.from(input);
+  throw new Error("无法识别的飞书资源返回格式，类型为: " + typeof input);
 }
 
 async function sendFeishuMessage(openId, text) {
