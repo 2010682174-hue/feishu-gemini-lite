@@ -91,7 +91,7 @@ app.post('/', async (req, res) => {
         params: { type: 'image' }
       });
 
-      // 转换为 Buffer
+      // 使用对齐后的读取函数
       const imageBuffer = await streamToBuffer(imageResponse);
       const imageBase64 = imageBuffer.toString('base64');
 
@@ -115,34 +115,30 @@ app.post('/', async (req, res) => {
   }
 });
 
-// 全兼容的转换函数
+// 完美匹配飞书 SDK 的流获取函数
 async function streamToBuffer(input) {
   if (!input) throw new Error("输入对象为空");
-  console.log("飞书资源返回的原始对象 keys:", Object.keys(input));
 
-  if (Buffer.isBuffer(input)) return input;
-  if (input.fileBuffer) return Buffer.from(input.fileBuffer);
-  if (input.data) return Buffer.from(input.data);
-  if (input.file) return Buffer.from(input.file);
-  if (input.body) return await streamToBuffer(input.body);
+  let stream = input;
+  if (typeof input.getReadableStream === 'function') {
+    stream = input.getReadableStream();
+  } else if (input.body && typeof input.body.getReadableStream === 'function') {
+    stream = input.body.getReadableStream();
+  }
 
-  if (typeof input.on === 'function') {
+  if (stream && typeof stream.on === 'function') {
     return new Promise((resolve, reject) => {
       const chunks = [];
-      input.on('data', (chunk) => chunks.push(chunk));
-      input.on('end', () => resolve(Buffer.concat(chunks)));
-      input.on('error', (err) => reject(err));
+      stream.on('data', (chunk) => chunks.push(chunk));
+      stream.on('end', () => resolve(Buffer.concat(chunks)));
+      stream.on('error', (err) => reject(err));
     });
   }
 
-  if (typeof input.arrayBuffer === 'function') {
-    const ab = await input.arrayBuffer();
-    return Buffer.from(ab);
-  }
+  if (Buffer.isBuffer(stream)) return stream;
+  if (stream && stream.fileBuffer) return Buffer.from(stream.fileBuffer);
 
-  if (input instanceof ArrayBuffer) return Buffer.from(input);
-
-  throw new Error("无法识别的飞书资源返回格式，Keys: " + JSON.stringify(Object.keys(input)));
+  throw new Error("无法从飞书响应中提取流，可用方法: " + Object.keys(input));
 }
 
 async function sendFeishuMessage(openId, text) {
