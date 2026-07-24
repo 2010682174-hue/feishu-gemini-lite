@@ -91,7 +91,7 @@ app.post('/', async (req, res) => {
         params: { type: 'image' }
       });
 
-      // 使用终极兼容的转换函数
+      // 转换为 Buffer
       const imageBuffer = await streamToBuffer(imageResponse);
       const imageBase64 = imageBuffer.toString('base64');
 
@@ -115,10 +115,18 @@ app.post('/', async (req, res) => {
   }
 });
 
-// 终极兼容的转 Buffer 函数
+// 全兼容的转换函数
 async function streamToBuffer(input) {
+  if (!input) throw new Error("输入对象为空");
+  console.log("飞书资源返回的原始对象 keys:", Object.keys(input));
+
   if (Buffer.isBuffer(input)) return input;
-  if (input && typeof input.on === 'function') {
+  if (input.fileBuffer) return Buffer.from(input.fileBuffer);
+  if (input.data) return Buffer.from(input.data);
+  if (input.file) return Buffer.from(input.file);
+  if (input.body) return await streamToBuffer(input.body);
+
+  if (typeof input.on === 'function') {
     return new Promise((resolve, reject) => {
       const chunks = [];
       input.on('data', (chunk) => chunks.push(chunk));
@@ -126,14 +134,15 @@ async function streamToBuffer(input) {
       input.on('error', (err) => reject(err));
     });
   }
-  if (input && typeof input.arrayBuffer === 'function') {
+
+  if (typeof input.arrayBuffer === 'function') {
     const ab = await input.arrayBuffer();
     return Buffer.from(ab);
   }
-  if (input && input.fileBuffer) return Buffer.from(input.fileBuffer);
-  if (input && input.data) return Buffer.from(input.data);
+
   if (input instanceof ArrayBuffer) return Buffer.from(input);
-  throw new Error("无法识别的飞书资源返回格式，类型为: " + typeof input);
+
+  throw new Error("无法识别的飞书资源返回格式，Keys: " + JSON.stringify(Object.keys(input)));
 }
 
 async function sendFeishuMessage(openId, text) {
