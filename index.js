@@ -231,7 +231,7 @@ async function handleFeishuMessage(event) {
     let errorTips = `⚠️ AI 引擎运行出错：\n${(err.message || JSON.stringify(err)).substring(0, 150)}...`;
     
     if (err.message?.includes('429') || err.message?.includes('quota')) {
-       errorTips = "🚨 **触发了 Gemini API 限制**\n当前请求人数过多或您的免费额度（15次/分钟）已被耗尽，请等待一分钟后再试！";
+       errorTips = "🚨 **触发了 Gemini API 限制**";
     } else if (err.message?.includes('fetch failed')) {
        errorTips = "📶 网络请求失败，Render 服务器连接 Google 出现拥堵，请重试。";
     }
