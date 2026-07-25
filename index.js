@@ -55,26 +55,27 @@ app.post('/', async (req, res) => {
     const msgType = message.message_type; // 'text', 'image', 'media'(视频) 等
     const openId = event.sender.sender_id.open_id;
     const messageId = message.message_id;
+    const chatId = message.chat_id;
 
     // --- Token 额度检查 ---
     if (globalUsedTokens >= maxTokenLimit) {
-      await sendFeishuMessage(openId, `🚫 服务已暂停，额度已用尽。\n\n已使用token: ${globalUsedTokens}/${maxTokenLimit}`);
+      await sendFeishuMessage(chatId, `🚫 服务已暂停，额度已用尽。\n\n已使用token: ${globalUsedTokens}/${maxTokenLimit}`);
       return;
     }
 
-    if (!userSessions.has(openId)) {
+    if (!userSessions.has(chatId)) {
       const model = genAI.getGenerativeModel({ 
         model: modelName, 
         systemInstruction: systemPrompt,
         generationConfig: generationConfig,
         safetySettings: safetySettings
       });
-      userSessions.set(openId, {
+      userSessions.set(chatId, {
         chat: model.startChat({ history: [] }),
         pendingMedia: null // 用于暂存等待用户输入的媒体（图片或视频）
       });
     }
-    const session = userSessions.get(openId);
+    const session = userSessions.get(chatId);
 
     // 1. 处理文本消息
     if (msgType === 'text') {
@@ -91,14 +92,14 @@ app.post('/', async (req, res) => {
         });
         session.chat = model.startChat({ history: [] });
         session.pendingMedia = null;
-        await sendFeishuMessage(openId, "🧹 已经为您清除了所有对话上下文和暂存媒体文件！");
+        await sendFeishuMessage(chatId, "🧹 已经为您清除了当前群/会话的所有对话上下文和暂存媒体文件！");
         return;
       }
 
       // 如果用户有暂存的媒体（图片或视频），并且输入了需求
       if (session.pendingMedia) {
-        console.log(`用户 ${openId} 补充了媒体文件需求: ${userText}`);
-        await sendFeishuMessage(openId, "收到需求，Gemini 正在全力处理中（大文件可能需要十几秒）...");
+        console.log(`群/用户 ${chatId} 补充了媒体文件需求: ${userText}`);
+        await sendFeishuMessage(chatId, "收到需求，Gemini 正在全力处理中（大文件可能需要十几秒）...");
 
         const mediaPart = {
           inlineData: {
@@ -117,7 +118,7 @@ app.post('/', async (req, res) => {
 
         session.pendingMedia = null; // 处理完清空
 
-        await sendFeishuMessage(openId, replyText);
+        await sendFeishuMessage(chatId, replyText);
         return;
       }
 
@@ -131,7 +132,7 @@ app.post('/', async (req, res) => {
       globalUsedTokens += usedTokens;
       replyText += `\n\n已使用token: ${globalUsedTokens}/${maxTokenLimit}`;
 
-      await sendFeishuMessage(openId, replyText);
+      await sendFeishuMessage(chatId, replyText);
 
     } 
     // 2. 处理图片消息
@@ -152,7 +153,7 @@ app.post('/', async (req, res) => {
         mimeType: "image/jpeg"
       };
 
-      await sendFeishuMessage(openId, "📷 收到图片，请直接回复文字说明你的需求~");
+      await sendFeishuMessage(chatId, "📷 收到图片，请直接回复文字说明你的需求~");
     }
     // 3. 处理视频消息 (飞书视频/媒体消息类型通常为 'media')
     else if (msgType === 'media') {
@@ -161,7 +162,7 @@ app.post('/', async (req, res) => {
       const fileKey = content.file_key;
 
       console.log(`收到视频, 正在下载, file_key: ${fileKey}`);
-      await sendFeishuMessage(openId, "正在接收并下载您的视频，请稍候...");
+      await sendFeishuMessage(chatId, "正在接收并下载您的视频，请稍候...");
 
       const videoResponse = await larkClient.im.v1.messageResource.get({
         path: { message_id: messageId, file_key: fileKey },
@@ -175,7 +176,7 @@ app.post('/', async (req, res) => {
         mimeType: "video/mp4" // 默认按 mp4 视频处理
       };
 
-      await sendFeishuMessage(openId, "🎬 收到视频，请直接回复文字说明你的需求（例如：总结这个视频讲了什么）~");
+      await sendFeishuMessage(chatId, "🎬 收到视频，请直接回复文字说明你的需求（例如：总结这个视频讲了什么）~");
     }
 
   } catch (err) {
@@ -183,7 +184,7 @@ app.post('/', async (req, res) => {
     try {
       const errorDetail = err.message || JSON.stringify(err);
       await sendFeishuMessage(
-        req.body.event.sender.sender_id.open_id, 
+        req.body.event.message.chat_id, 
         `⚠️ 运行出错：\n${errorDetail.substring(0, 200)}`
       );
     } catch (e) {}
@@ -217,16 +218,16 @@ async function streamToBuffer(input) {
 }
 
 // 采用 Markdown 卡片格式发送（完美支持代码块高亮）
-async function sendFeishuMessage(openId, text) {
+async function sendFeishuMessage(chatId, text) {
   const cardContent = {
     config: { wide_screen_mode: true },
     elements: [{ tag: "markdown", content: text }]
   };
 
   await larkClient.im.v1.message.create({
-    params: { receive_id_type: 'open_id' },
+    params: { receive_id_type: 'chat_id' },
     data: {
-      receive_id: openId,
+      receive_id: chatId,
       msg_type: 'interactive',
       content: JSON.stringify(cardContent)
     }
