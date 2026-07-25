@@ -1,5 +1,5 @@
 const express = require('express');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 const lark = require('@larksuiteoapi/node-sdk');
 
 const app = express();
@@ -8,6 +8,23 @@ app.use(express.json());
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const modelName = process.env.MODEL || 'gemini-1.5-pro'; // 建议用 1.5-pro 或 2.5 系列处理视频
 const systemPrompt = process.env.SYSTEM_PROMPT || "你是一个高效的AI多模态助手。";
+
+// --- AI 生成参数配置（可在 Render 环境变量调整） ---
+const generationConfig = {};
+if (process.env.TEMPERATURE) generationConfig.temperature = parseFloat(process.env.TEMPERATURE);
+if (process.env.TOP_K) generationConfig.topK = parseInt(process.env.TOP_K);
+if (process.env.TOP_P) generationConfig.topP = parseFloat(process.env.TOP_P);
+if (process.env.MAX_OUTPUT_TOKENS) generationConfig.maxOutputTokens = parseInt(process.env.MAX_OUTPUT_TOKENS);
+
+// --- 安全限制配置（可在 Render 环境变量调整） ---
+// 支持选项: BLOCK_NONE, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE, BLOCK_LOW_AND_ABOVE
+const safetyThreshold = HarmBlockThreshold[process.env.SAFETY_THRESHOLD] || HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE;
+const safetySettings = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: safetyThreshold },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: safetyThreshold },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: safetyThreshold },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: safetyThreshold },
+];
 
 const larkClient = new lark.Client({
   appId: process.env.FEISHU_APP_ID,
@@ -36,7 +53,12 @@ app.post('/', async (req, res) => {
     const messageId = message.message_id;
 
     if (!userSessions.has(openId)) {
-      const model = genAI.getGenerativeModel({ model: modelName, systemInstruction: systemPrompt });
+      const model = genAI.getGenerativeModel({ 
+        model: modelName, 
+        systemInstruction: systemPrompt,
+        generationConfig: generationConfig,
+        safetySettings: safetySettings
+      });
       userSessions.set(openId, {
         chat: model.startChat({ history: [] }),
         pendingMedia: null // 用于暂存等待用户输入的媒体（图片或视频）
@@ -51,7 +73,12 @@ app.post('/', async (req, res) => {
       
       const resetCommands = ['#reset', '/clear', '重置', '清空记忆', '清除上下文'];
       if (resetCommands.includes(userText.toLowerCase())) {
-        const model = genAI.getGenerativeModel({ model: modelName, systemInstruction: systemPrompt });
+        const model = genAI.getGenerativeModel({ 
+          model: modelName, 
+          systemInstruction: systemPrompt,
+          generationConfig: generationConfig,
+          safetySettings: safetySettings
+        });
         session.chat = model.startChat({ history: [] });
         session.pendingMedia = null;
         await sendFeishuMessage(openId, "🧹 已经为您清除了所有对话上下文和暂存媒体文件！");
