@@ -6,7 +6,7 @@ const app = express();
 app.use(express.json());
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const modelName = process.env.MODEL || 'gemini-1.5-pro'; // 建议用 1.5-pro 或 2.5 系列处理视频
+const modelName = process.env.MODEL || 'gemini-3.5-flash'; // 建议用 1.5-pro 或 2.5 系列处理视频
 const systemPrompt = process.env.SYSTEM_PROMPT || "你是一个高效的AI多模态助手。";
 
 // --- AI 生成参数配置（可在 Render 环境变量调整） ---
