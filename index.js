@@ -141,13 +141,27 @@ async function streamToBuffer(input) {
   throw new Error("无法从飞书响应中提取流，可用方法: " + Object.keys(input));
 }
 
+// 升级版的发送函数：使用飞书“卡片消息 + Markdown”，完美支持代码块、加粗、换行
 async function sendFeishuMessage(openId, text) {
+  // 构造飞书卡片的 Markdown 内容
+  const cardContent = {
+    config: {
+      wide_screen_mode: true
+    },
+    elements: [
+      {
+        tag: "markdown",
+        content: text // 直接传入包含 ``` 代码块的 Markdown 文本
+      }
+    ]
+  };
+
   await larkClient.im.v1.message.create({
     params: { receive_id_type: 'open_id' },
     data: {
       receive_id: openId,
-      msg_type: 'text',
-      content: JSON.stringify({ text: text })
+      msg_type: 'interactive', // 必须是 interactive 卡片类型
+      content: JSON.stringify(cardContent)
     }
   });
 }
