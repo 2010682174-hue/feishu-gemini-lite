@@ -6,7 +6,7 @@ const app = express();
 app.use(express.json());
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const modelName = process.env.MODEL || 'gemini-1.5-pro';
+const modelName = process.env.MODEL || 'gemini-1.5-pro'; // 建议用 1.5-pro 或 2.5 系列处理视频
 const systemPrompt = process.env.SYSTEM_PROMPT || "你是一个高效的AI多模态助手。";
 
 const larkClient = new lark.Client({
@@ -15,6 +15,8 @@ const larkClient = new lark.Client({
   disableTokenCache: false
 });
 
+// 用户会话缓存 
+// 结构: { openId: { chat, pendingMedia: { base64, mimeType, type } } }
 const userSessions = new Map();
 
 app.post('/', async (req, res) => {
@@ -29,7 +31,7 @@ app.post('/', async (req, res) => {
     if (!event || !event.message) return;
 
     const message = event.message;
-    const msgType = message.message_type; 
+    const msgType = message.message_type; // 'text', 'image', 'media'(视频) 等
     const openId = event.sender.sender_id.open_id;
     const messageId = message.message_id;
 
@@ -37,11 +39,12 @@ app.post('/', async (req, res) => {
       const model = genAI.getGenerativeModel({ model: modelName, systemInstruction: systemPrompt });
       userSessions.set(openId, {
         chat: model.startChat({ history: [] }),
-        pendingImage: null 
+        pendingMedia: null // 用于暂存等待用户输入的媒体（图片或视频）
       });
     }
     const session = userSessions.get(openId);
 
+    // 1. 处理文本消息
     if (msgType === 'text') {
       const content = JSON.parse(message.content);
       const userText = content.text.trim();
@@ -50,57 +53,80 @@ app.post('/', async (req, res) => {
       if (resetCommands.includes(userText.toLowerCase())) {
         const model = genAI.getGenerativeModel({ model: modelName, systemInstruction: systemPrompt });
         session.chat = model.startChat({ history: [] });
-        session.pendingImage = null;
-        await sendFeishuMessage(openId, "🧹 已经为您清除了所有对话上下文和暂存图片！");
+        session.pendingMedia = null;
+        await sendFeishuMessage(openId, "🧹 已经为您清除了所有对话上下文和暂存媒体文件！");
         return;
       }
 
-      if (session.pendingImage) {
-        console.log(`用户 ${openId} 补充了图片需求: ${userText}`);
-        await sendFeishuMessage(openId, "收到需求，Gemini 正在结合图片处理中...");
+      // 如果用户有暂存的媒体（图片或视频），并且输入了需求
+      if (session.pendingMedia) {
+        console.log(`用户 ${openId} 补充了媒体文件需求: ${userText}`);
+        await sendFeishuMessage(openId, "收到需求，Gemini 正在全力处理中（大文件可能需要十几秒）...");
 
-        const imagePart = {
+        const mediaPart = {
           inlineData: {
-            data: session.pendingImage.base64,
-            mimeType: session.pendingImage.mimeType
+            data: session.pendingMedia.base64,
+            mimeType: session.pendingMedia.mimeType
           }
         };
 
-        const result = await session.chat.sendMessage([userText, imagePart]);
+        const result = await session.chat.sendMessage([userText, mediaPart]);
         const replyText = result.response.text() || "Gemini 没返回内容。";
 
-        session.pendingImage = null;
+        session.pendingMedia = null; // 处理完清空
 
         await sendFeishuMessage(openId, replyText);
         return;
       }
 
+      // 普通纯文本对话
       console.log(`收到文本: ${userText}`);
       const result = await session.chat.sendMessage(userText);
       await sendFeishuMessage(openId, result.response.text() || "Gemini 没返回内容。");
 
     } 
+    // 2. 处理图片消息
     else if (msgType === 'image') {
       const content = JSON.parse(message.content);
       const imageKey = content.image_key;
 
       console.log(`收到图片, 正在下载, image_key: ${imageKey}`);
-
       const imageResponse = await larkClient.im.v1.messageResource.get({
         path: { message_id: messageId, file_key: imageKey },
         params: { type: 'image' }
       });
 
-      // 使用对齐后的读取函数
       const imageBuffer = await streamToBuffer(imageResponse);
-      const imageBase64 = imageBuffer.toString('base64');
-
-      session.pendingImage = {
-        base64: imageBase64,
+      
+      session.pendingMedia = {
+        base64: imageBuffer.toString('base64'),
         mimeType: "image/jpeg"
       };
 
-      await sendFeishuMessage(openId, "收到图片，请说明需求（直接回复文字即可）~");
+      await sendFeishuMessage(openId, "📷 收到图片，请直接回复文字说明你的需求~");
+    }
+    // 3. 处理视频消息 (飞书视频/媒体消息类型通常为 'media')
+    else if (msgType === 'media') {
+      const content = JSON.parse(message.content);
+      // 飞书视频消息通常包含 file_key
+      const fileKey = content.file_key;
+
+      console.log(`收到视频, 正在下载, file_key: ${fileKey}`);
+      await sendFeishuMessage(openId, "正在接收并下载您的视频，请稍候...");
+
+      const videoResponse = await larkClient.im.v1.messageResource.get({
+        path: { message_id: messageId, file_key: fileKey },
+        params: { type: 'file' } // 飞书媒体/视频资源通常用 file 类型下载
+      });
+
+      const videoBuffer = await streamToBuffer(videoResponse);
+
+      session.pendingMedia = {
+        base64: videoBuffer.toString('base64'),
+        mimeType: "video/mp4" // 默认按 mp4 视频处理
+      };
+
+      await sendFeishuMessage(openId, "🎬 收到视频，请直接回复文字说明你的需求（例如：总结这个视频讲了什么）~");
     }
 
   } catch (err) {
@@ -115,7 +141,7 @@ app.post('/', async (req, res) => {
   }
 });
 
-// 完美匹配飞书 SDK 的流获取函数
+// 通用流转 Buffer 函数
 async function streamToBuffer(input) {
   if (!input) throw new Error("输入对象为空");
 
@@ -141,26 +167,18 @@ async function streamToBuffer(input) {
   throw new Error("无法从飞书响应中提取流，可用方法: " + Object.keys(input));
 }
 
-// 升级版的发送函数：使用飞书“卡片消息 + Markdown”，完美支持代码块、加粗、换行
+// 采用 Markdown 卡片格式发送（完美支持代码块高亮）
 async function sendFeishuMessage(openId, text) {
-  // 构造飞书卡片的 Markdown 内容
   const cardContent = {
-    config: {
-      wide_screen_mode: true
-    },
-    elements: [
-      {
-        tag: "markdown",
-        content: text // 直接传入包含 ``` 代码块的 Markdown 文本
-      }
-    ]
+    config: { wide_screen_mode: true },
+    elements: [{ tag: "markdown", content: text }]
   };
 
   await larkClient.im.v1.message.create({
     params: { receive_id_type: 'open_id' },
     data: {
       receive_id: openId,
-      msg_type: 'interactive', // 必须是 interactive 卡片类型
+      msg_type: 'interactive',
       content: JSON.stringify(cardContent)
     }
   });
