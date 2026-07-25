@@ -1,7 +1,7 @@
 {
   "name": "feishu-gemini-lite",
   "version": "1.0.0",
-  "description": "A lightweight Feishu bot for Google Gemini with text and image support.",
+  "description": "A lightweight Feishu bot for Google Gemini with search, web scraping, and multi-modal support.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,6 +9,8 @@
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
     "@larksuiteoapi/node-sdk": "^1.36.0",
+    "axios": "^1.7.0",
+    "cheerio": "^1.0.0-rc.12",
     "express": "^4.19.2"
   }
 }
