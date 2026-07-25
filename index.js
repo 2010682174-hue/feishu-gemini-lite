@@ -26,6 +26,10 @@ const safetySettings = [
   { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: safetyThreshold },
 ];
 
+// --- 全局 Token 统计（内存统计，服务重启后重置） ---
+let globalUsedTokens = 0;
+const maxTokenLimit = process.env.MAX_TOKEN_LIMIT ? parseInt(process.env.MAX_TOKEN_LIMIT) : 38000000;
+
 const larkClient = new lark.Client({
   appId: process.env.FEISHU_APP_ID,
   appSecret: process.env.FEISHU_APP_SECRET,
@@ -51,6 +55,12 @@ app.post('/', async (req, res) => {
     const msgType = message.message_type; // 'text', 'image', 'media'(视频) 等
     const openId = event.sender.sender_id.open_id;
     const messageId = message.message_id;
+
+    // --- Token 额度检查 ---
+    if (globalUsedTokens >= maxTokenLimit) {
+      await sendFeishuMessage(openId, `🚫 服务已暂停，额度已用尽。\n\n已使用token: ${globalUsedTokens}/${maxTokenLimit}`);
+      return;
+    }
 
     if (!userSessions.has(openId)) {
       const model = genAI.getGenerativeModel({ 
@@ -98,7 +108,12 @@ app.post('/', async (req, res) => {
         };
 
         const result = await session.chat.sendMessage([userText, mediaPart]);
-        const replyText = result.response.text() || "Gemini 没返回内容。";
+        let replyText = result.response.text() || "Gemini 没返回内容。";
+
+        // 更新并汇报 token
+        const usedTokens = result.response.usageMetadata?.totalTokenCount || 0;
+        globalUsedTokens += usedTokens;
+        replyText += `\n\n已使用token: ${globalUsedTokens}/${maxTokenLimit}`;
 
         session.pendingMedia = null; // 处理完清空
 
@@ -109,7 +124,14 @@ app.post('/', async (req, res) => {
       // 普通纯文本对话
       console.log(`收到文本: ${userText}`);
       const result = await session.chat.sendMessage(userText);
-      await sendFeishuMessage(openId, result.response.text() || "Gemini 没返回内容。");
+      let replyText = result.response.text() || "Gemini 没返回内容。";
+      
+      // 更新并汇报 token
+      const usedTokens = result.response.usageMetadata?.totalTokenCount || 0;
+      globalUsedTokens += usedTokens;
+      replyText += `\n\n已使用token: ${globalUsedTokens}/${maxTokenLimit}`;
+
+      await sendFeishuMessage(openId, replyText);
 
     } 
     // 2. 处理图片消息
